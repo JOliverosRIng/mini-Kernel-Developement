@@ -1,9 +1,8 @@
-
 #include "memory.hpp"
 #include "paging.hpp"
 #include "process.hpp"
 #include <iostream>
-#include <limits>`
+#include <limits>
 
 static void pausa(const char *mensaje = "Presione Enter para continuar...")
 {
@@ -14,8 +13,7 @@ static void pausa(const char *mensaje = "Presione Enter para continuar...")
 static void titulo(const char *texto)
 {
     const int ancho = 60;
-    std::cout << "\n"
-              << std::string(ancho, '=') << "\n";
+    std::cout << "\n" << std::string(ancho, '=') << "\n";
     std::cout << "  " << texto << "\n";
     std::cout << std::string(ancho, '=') << "\n\n";
 }
@@ -31,19 +29,13 @@ static void limpiarBuffer()
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 }
 
-//  Fase 1
 static void demoFase1()
 {
     titulo("FASE 1: Gestion de Procesos");
-
-    std::cout << "\n";
-    std::cout << "En desarrollo...\n";
-    std::cout << "\n";
-
+    std::cout << "\nEn desarrollo...\n\n";
     pausa("Presione Enter para volver al menu principal");
 }
 
-//  Fase 2
 static void demoFase2()
 {
     titulo("FASE 2: Gestion de Memoria (First-Fit + Paginacion)");
@@ -112,7 +104,7 @@ static void demoFase2()
     mem.free(1);
     paging.removeTable(1);
     mem.printMap();
-    std::cout << "RESULTADO: Los dos huecos contiguos se fusionaron en uno de 524 unidades\n";
+    std::cout << "RESULTADO: Los dos huecos contiguos se fusionaron en uno de 500 unidades\n";
     pausa();
 
     seccion("Ahora SI se puede asignar el bloque de 350 unidades");
@@ -123,31 +115,20 @@ static void demoFase2()
     pausa("Presione Enter para volver al menu principal");
 }
 
-//  Fase 3
 static void demoFase3()
 {
     titulo("FASE 3: Sistema de Archivos y E/S");
-
-    std::cout << "\n";
-    std::cout << "En desarrollo...\n";
-    std::cout << "\n";
-
+    std::cout << "\nEn desarrollo...\n\n";
     pausa("Presione Enter para volver al menu principal");
 }
 
-// Demostración Completa
 static void demoCompleta()
 {
     titulo("DEMOSTRACION COMPLETA: Kernel Integrado");
-
-    std::cout << "\n";
-    std::cout << "En desarrollo...\n";
-    std::cout << "\n";
-
+    std::cout << "\nEn desarrollo...\n\n";
     pausa("Presione Enter para volver al menu principal");
 }
 
-//  Menu
 static void mostrarMenu()
 {
     std::cout << "\n";
@@ -164,7 +145,6 @@ static void mostrarMenu()
     std::cout << "Opcion: ";
 }
 
-//  main
 int main()
 {
     int opcion = 0;

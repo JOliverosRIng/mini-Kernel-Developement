@@ -1,4 +1,3 @@
-
 #include "paging.hpp"
 #include <iostream>
 #include <iomanip>
@@ -13,9 +12,11 @@ void PagingUnit::createTable(int pid, int memStart, int memSize)
 
     std::unordered_map<int, int> table;
 
+    // Se calcula cuántas páginas necesita el proceso.
     int pageCount = (memSize + PAGE_SIZE - 1) / PAGE_SIZE;
     int baseFrame = memStart / PAGE_SIZE;
 
+    // Mapeo lógico -> físico simplificado.
     for (int i = 0; i < pageCount; ++i)
     {
         table[i] = baseFrame + i;
@@ -115,6 +116,7 @@ void PagingUnit::printTable(int pid) const
         auto fit = table.find(p);
         if (fit == table.end())
             continue;
+
         std::cout << "| "
                   << std::setw(14) << fit->first
                   << std::setw(14) << fit->second

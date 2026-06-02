@@ -3,8 +3,6 @@
 
 #include <string>
 
-constexpr int MAX_PROCESSES = 10;
-
 enum class ProcessState
 {
     NEW,
@@ -16,6 +14,15 @@ enum class ProcessState
 
 class Process
 {
+private:
+    int pid_;
+    std::string name_;
+    ProcessState state_;
+    int burstTime_;
+    int remainingTime_;
+    int memoryStart_;
+    int memorySize_;
+
 public:
     Process(int pid, const std::string &name, int burstTime, int memSize);
 
@@ -28,19 +35,8 @@ public:
 
     void setState(ProcessState s);
     void setMemoryStart(int addr);
-
     bool decrementTime();
-
     std::string toString() const;
-
-private:
-    int pid_;
-    std::string name_;
-    ProcessState state_;
-    int burstTime_;
-    int remainingTime_;
-    int memoryStart_;
-    int memorySize_;
 };
 
 #endif

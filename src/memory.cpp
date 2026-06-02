@@ -1,26 +1,23 @@
-
 #include "memory.hpp"
 #include <iostream>
 #include <iomanip>
-#include <algorithm>
 
 MemoryManager::MemoryManager()
 {
+    // Estado inicial: toda la memoria está libre en un único bloque.
     blocks_.push_back({0, MEM_SIZE, -1, true});
 }
 
-// ─── allocate ─────────────────────────────────────────────────────────────────
-// Algoritmo First-Fit: recorre blocks_ y asigna el primer bloque libre cuyo
-// tamaño sea >= size. Si el bloque es más grande, lo divide en dos:
-//   [bloque asignado (size)] [resto libre (bloque.size - size)]
 int MemoryManager::allocate(int pid, int size)
 {
+    // Validación básica del tamaño solicitado.
     if (size <= 0 || size > MEM_SIZE)
     {
         std::cout << "[MemoryManager] ERROR: Tamaño inválido (" << size << ")\n";
         return -1;
     }
 
+    // First-Fit: busca el primer bloque libre suficientemente grande.
     for (auto it = blocks_.begin(); it != blocks_.end(); ++it)
     {
         if (!it->isFree || it->size < size)
@@ -30,6 +27,8 @@ int MemoryManager::allocate(int pid, int size)
 
         int baseAddr = it->start;
 
+        // Si el bloque es más grande que lo pedido, se divide en dos:
+        // una parte ocupada y una parte libre restante.
         if (it->size > size)
         {
             MemBlock remainder;
@@ -46,6 +45,7 @@ int MemoryManager::allocate(int pid, int size)
         }
         else
         {
+            // Si el bloque encaja exactamente, solo se marca como ocupado.
             it->pid = pid;
             it->isFree = false;
         }
@@ -65,6 +65,7 @@ void MemoryManager::free(int pid)
 {
     bool found = false;
 
+    // Busca el bloque perteneciente al proceso y lo marca como libre.
     for (auto &block : blocks_)
     {
         if (!block.isFree && block.pid == pid)
@@ -89,6 +90,7 @@ void MemoryManager::free(int pid)
 
 void MemoryManager::coalesce()
 {
+    // Fusiona bloques libres contiguos para reducir fragmentación externa.
     for (std::size_t i = 0; i + 1 < blocks_.size();)
     {
         if (blocks_[i].isFree && blocks_[i + 1].isFree)
