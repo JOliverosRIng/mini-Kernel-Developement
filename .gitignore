@@ -1,0 +1,5 @@
+mini_kernel
+test_memory
+*.dSYM/
+*.o
+.DS_Store

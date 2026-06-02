@@ -1,0 +1,209 @@
+
+#include "memory.hpp"
+#include "paging.hpp"
+#include "process.hpp"
+#include <iostream>
+#include <limits>`
+
+static void pausa(const char *mensaje = "Presione Enter para continuar...")
+{
+    std::cout << "\n>>> " << mensaje << " ";
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+}
+
+static void titulo(const char *texto)
+{
+    const int ancho = 60;
+    std::cout << "\n"
+              << std::string(ancho, '=') << "\n";
+    std::cout << "  " << texto << "\n";
+    std::cout << std::string(ancho, '=') << "\n\n";
+}
+
+static void seccion(const char *texto)
+{
+    std::cout << "\n--- " << texto << " ---\n\n";
+}
+
+static void limpiarBuffer()
+{
+    std::cin.clear();
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+}
+
+//  Fase 1
+static void demoFase1()
+{
+    titulo("FASE 1: Gestion de Procesos");
+
+    std::cout << "\n";
+    std::cout << "En desarrollo...\n";
+    std::cout << "\n";
+
+    pausa("Presione Enter para volver al menu principal");
+}
+
+//  Fase 2
+static void demoFase2()
+{
+    titulo("FASE 2: Gestion de Memoria (First-Fit + Paginacion)");
+
+    MemoryManager mem;
+    PagingUnit paging;
+
+    seccion("Estado inicial de la memoria (1024 unidades libres)");
+    mem.printMap();
+    pausa();
+
+    seccion("Asignando memoria a 3 procesos (algoritmo First-Fit)");
+    std::cout << "- PID 1: 200 unidades\n";
+    std::cout << "- PID 2: 300 unidades\n";
+    std::cout << "- PID 3: 128 unidades\n\n";
+
+    int a1 = mem.allocate(1, 200);
+    int a2 = mem.allocate(2, 300);
+    int a3 = mem.allocate(3, 128);
+    mem.printMap();
+    pausa();
+
+    seccion("Creando tablas de paginas (PAGE_SIZE=64, 16 marcos)");
+    if (a1 != -1)
+    {
+        paging.createTable(1, a1, 200);
+        paging.printTable(1);
+    }
+    pausa("Presione Enter para ver la tabla del Proceso 2");
+    if (a2 != -1)
+    {
+        paging.createTable(2, a2, 300);
+        paging.printTable(2);
+    }
+    pausa("Presione Enter para ver la tabla del Proceso 3");
+    if (a3 != -1)
+    {
+        paging.createTable(3, a3, 128);
+        paging.printTable(3);
+    }
+    pausa();
+
+    seccion("Traduccion de direcciones logicas a fisicas (Proceso 2)");
+    std::cout << "Direccion logica 0   -> primera pagina, offset 0\n";
+    paging.translate(2, 0);
+    std::cout << "\nDireccion logica 64  -> segunda pagina, offset 0\n";
+    paging.translate(2, 64);
+    std::cout << "\nDireccion logica 127 -> segunda pagina, offset 63\n";
+    paging.translate(2, 127);
+    std::cout << "\nDireccion logica 700 -> FUERA DE RANGO (fallo de pagina)\n";
+    paging.translate(2, 700);
+    pausa();
+
+    seccion("Liberando PID 2 -> se crea un hueco (fragmentacion)");
+    mem.free(2);
+    paging.removeTable(2);
+    mem.printMap();
+    pausa();
+
+    seccion("Intentando asignar 350 unidades (fragmentacion externa)");
+    std::cout << "Total libre: 724 unidades, pero no hay bloque contiguo >= 350\n\n";
+    mem.allocate(4, 350);
+    pausa();
+
+    seccion("Liberando PID 1 -> COALESCING fusiona bloques adyacentes");
+    mem.free(1);
+    paging.removeTable(1);
+    mem.printMap();
+    std::cout << "RESULTADO: Los dos huecos contiguos se fusionaron en uno de 524 unidades\n";
+    pausa();
+
+    seccion("Ahora SI se puede asignar el bloque de 350 unidades");
+    int a4 = mem.allocate(4, 350);
+    if (a4 != -1)
+        paging.createTable(4, a4, 350);
+    mem.printMap();
+    pausa("Presione Enter para volver al menu principal");
+}
+
+//  Fase 3
+static void demoFase3()
+{
+    titulo("FASE 3: Sistema de Archivos y E/S");
+
+    std::cout << "\n";
+    std::cout << "En desarrollo...\n";
+    std::cout << "\n";
+
+    pausa("Presione Enter para volver al menu principal");
+}
+
+// Demostración Completa
+static void demoCompleta()
+{
+    titulo("DEMOSTRACION COMPLETA: Kernel Integrado");
+
+    std::cout << "\n";
+    std::cout << "En desarrollo...\n";
+    std::cout << "\n";
+
+    pausa("Presione Enter para volver al menu principal");
+}
+
+//  Menu
+static void mostrarMenu()
+{
+    std::cout << "\n";
+    std::cout << "============================================================\n";
+    std::cout << "     MINI-KERNEL DE DEMOSTRACION - SISTEMAS OPERATIVOS     \n";
+    std::cout << "   Universidad Distrital Francisco Jose de Caldas - 2026   \n";
+    std::cout << "============================================================\n\n";
+    std::cout << "Seleccione una opcion:\n\n";
+    std::cout << "  1. Fase 1 - Gestion de Procesos        \n";
+    std::cout << "  2. Fase 2 - Gestion de Memoria         \n";
+    std::cout << "  3. Fase 3 - Sistema de Archivos y E/S  \n";
+    std::cout << "  4. Demostracion Completa (Kernel)      \n";
+    std::cout << "  5. Salir\n\n";
+    std::cout << "Opcion: ";
+}
+
+//  main
+int main()
+{
+    int opcion = 0;
+
+    while (true)
+    {
+        mostrarMenu();
+        std::cin >> opcion;
+
+        if (std::cin.fail())
+        {
+            limpiarBuffer();
+            std::cout << "\n[ERROR] Opcion invalida. Intente de nuevo.\n";
+            continue;
+        }
+
+        limpiarBuffer();
+
+        switch (opcion)
+        {
+        case 1:
+            demoFase1();
+            break;
+        case 2:
+            demoFase2();
+            break;
+        case 3:
+            demoFase3();
+            break;
+        case 4:
+            demoCompleta();
+            break;
+        case 5:
+            std::cout << "\nGracias por usar el Mini-Kernel!\n\n";
+            return 0;
+        default:
+            std::cout << "\n[ERROR] Opcion invalida. Seleccione 1-5.\n";
+        }
+    }
+
+    return 0;
+}
