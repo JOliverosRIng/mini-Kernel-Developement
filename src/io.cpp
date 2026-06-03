@@ -1,92 +1,103 @@
 #include "io.hpp"
-#include <iostream>
-#include <iomanip>
 
-IOManager::IOManager() : currentIO_(nullptr), completedOps_(0)
+#include <iomanip>
+#include <iostream>
+
+namespace
+{
+std::string describeProcess(int pid, const std::string &name)
+{
+    if (!name.empty())
+        return "Proceso '" + name + "'";
+    return "Proceso " + std::to_string(pid);
+}
+} // namespace
+
+IOManager::IOManager() : isProcessing_(false), completedOps_(0)
 {
     std::cout << "[IOManager] Gestor de E/S inicializado (latencia="
               << IO_TIME_CYCLES << " ciclos)\n";
 }
 
-IOManager::~IOManager()
-{
-    delete currentIO_;
-}
+IOManager::~IOManager() {}
 
 std::string IOManager::typeToString(IOType type) const
 {
     switch (type)
     {
     case IOType::READ:
-        return "READ";
+        return "lectura";
     case IOType::WRITE:
-        return "WRITE";
+        return "escritura";
     case IOType::OPEN:
-        return "OPEN";
+        return "apertura";
     case IOType::CLOSE:
-        return "CLOSE";
+        return "cierre";
     default:
-        return "UNKNOWN";
+        return "desconocido";
     }
 }
 
-void IOManager::requestIO(int pid, IOType type, const std::string &fileName)
+void IOManager::requestIO(int pid, IOType type, const std::string &fileName, const std::string &processName)
 {
     IORequest req;
     req.pid = pid;
+    req.processName = processName;
     req.type = type;
     req.fileName = fileName;
     req.cyclesRemaining = IO_TIME_CYCLES;
 
     ioQueue_.push(req);
 
-    std::cout << "[IOManager] Solicitud recibida: PID=" << pid
+    std::cout << "[IOManager] Solicitud recibida: "
+              << describeProcess(pid, processName)
               << " -> " << typeToString(type) << " '" << fileName << "'\n";
 }
 
 bool IOManager::processIO()
 {
-    // Si no hay operación en curso, tomar la siguiente de la cola
-    if (currentIO_ == nullptr)
+    return processAndGetCompletedPid() > 0;
+}
+
+int IOManager::processAndGetCompletedPid()
+{
+    if (!isProcessing_)
     {
         if (ioQueue_.empty())
-        {
-            return false; // No hay trabajo pendiente
-        }
+            return -1;
 
-        currentIO_ = new IORequest(ioQueue_.front());
+        activeIO_ = ioQueue_.front();
         ioQueue_.pop();
+        isProcessing_ = true;
 
-        std::cout << "[IOManager] Iniciando " << typeToString(currentIO_->type)
-                  << " para PID=" << currentIO_->pid << " ('"
-                  << currentIO_->fileName << "')\n";
+        std::cout << "[IOManager] Iniciando " << typeToString(activeIO_.type)
+                  << " para " << describeProcess(activeIO_.pid, activeIO_.processName) << " ('"
+                  << activeIO_.fileName << "')\n";
     }
 
-    // Procesar un ciclo de la operación actual
-    currentIO_->cyclesRemaining--;
+    activeIO_.cyclesRemaining--;
 
     std::cout << "[IOManager] Procesando... ciclos restantes: "
-              << currentIO_->cyclesRemaining << "\n";
+              << activeIO_.cyclesRemaining << "\n";
 
-    // Si completó, liberar el dispositivo
-    if (currentIO_->cyclesRemaining <= 0)
+    if (activeIO_.cyclesRemaining <= 0)
     {
-        std::cout << "[IOManager] *** INTERRUPCION DE E/S *** Operación "
-                  << typeToString(currentIO_->type) << " completada para PID="
-                  << currentIO_->pid << "\n";
+        std::cout << "[IOManager] interrupcion: "
+                  << typeToString(activeIO_.type) << " completada para "
+                  << activeIO_.processName << "\n";
 
         completedOps_++;
-        delete currentIO_;
-        currentIO_ = nullptr;
-        return true; // Operación completada
+        int completedPid = activeIO_.pid;
+        isProcessing_ = false;
+        return completedPid;
     }
 
-    return false; // Aún procesando
+    return 0;
 }
 
 bool IOManager::isBusy() const
 {
-    return currentIO_ != nullptr;
+    return isProcessing_;
 }
 
 int IOManager::queueSize() const
@@ -96,74 +107,45 @@ int IOManager::queueSize() const
 
 void IOManager::printQueue() const
 {
-    const int ancho = 60;
+    std::cout << "\nEstado de e/s (" << ioQueue_.size() << " pendientes):\n";
 
-    std::cout << "\n+" << std::string(ancho, '=') << "+\n";
-    std::cout << "|  COLA DE E/S (" << ioQueue_.size()
-              << " solicitudes pendientes)";
-
-    int padding = ancho - 33;
-    if (ioQueue_.size() >= 10)
-        padding--;
-    std::cout << std::string(padding, ' ') << "|\n";
-    std::cout << "+" << std::string(ancho, '=') << "+\n";
-
-    if (currentIO_ != nullptr)
+    if (isProcessing_)
     {
-        std::cout << "| EN PROCESO:" << std::string(47, ' ') << "|\n";
-        std::cout << "|   PID=" << currentIO_->pid << " -> "
-                  << std::left << std::setw(6) << typeToString(currentIO_->type)
-                  << " '" << currentIO_->fileName << "'";
-
-        int fileLen = currentIO_->fileName.length();
-        int pad = 35 - fileLen - (currentIO_->pid >= 10 ? 1 : 0);
-        std::cout << std::string(pad, ' ') << "|\n";
-        std::cout << "|   Ciclos restantes: " << currentIO_->cyclesRemaining
-                  << std::string(36, ' ') << "|\n";
-        std::cout << "+" << std::string(ancho, '-') << "+\n";
+        std::cout << " en proceso:\n";
+        std::cout << "   " << describeProcess(activeIO_.pid, activeIO_.processName) << " -> "
+                  << std::left << std::setw(6) << typeToString(activeIO_.type)
+                  << " '" << activeIO_.fileName << "'\n";
+        std::cout << "   ciclos restantes: " << activeIO_.cyclesRemaining << "\n";
     }
 
     if (ioQueue_.empty())
     {
-        std::cout << "| (Cola vacia)" << std::string(ancho - 15, ' ') << "|\n";
+        std::cout << " (cola vacia)\n";
     }
     else
     {
-        std::cout << "| PENDIENTES:" << std::string(47, ' ') << "|\n";
-
-        std::queue<IORequest> copy = ioQueue_; // Copiar para iterar sin modificar
+        std::cout << " pendientes:\n";
+        std::queue<IORequest> copy = ioQueue_;
         int pos = 1;
-
         while (!copy.empty())
         {
             const IORequest &req = copy.front();
-            std::cout << "|  " << pos << ". PID=" << req.pid << " -> "
+            std::cout << "  " << pos << ". " << describeProcess(req.pid, req.processName) << " -> "
                       << std::left << std::setw(6) << typeToString(req.type)
-                      << " '" << req.fileName << "'";
-
-            int fileLen = req.fileName.length();
-            int pad = 33 - fileLen - (req.pid >= 10 ? 1 : 0) - (pos >= 10 ? 1 : 0);
-            std::cout << std::string(pad, ' ') << "|\n";
+                      << " '" << req.fileName << "'\n";
 
             copy.pop();
             pos++;
         }
     }
-
-    std::cout << "+" << std::string(ancho, '=') << "+\n\n";
 }
 
 void IOManager::printStatus() const
 {
-    std::cout << "[IOManager] Estado: ";
-    if (currentIO_ != nullptr)
-    {
-        std::cout << "OCUPADO (PID=" << currentIO_->pid << ")";
-    }
+    std::cout << "[IOManager] estado: ";
+    if (isProcessing_)
+        std::cout << "ocupado (" << activeIO_.processName << ")";
     else
-    {
-        std::cout << "DISPONIBLE";
-    }
-    std::cout << " | Cola: " << ioQueue_.size()
-              << " | Completadas: " << completedOps_ << "\n";
+        std::cout << "disponible";
+    std::cout << " - cola: " << ioQueue_.size() << " - completadas: " << completedOps_ << "\n";
 }

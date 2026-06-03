@@ -1,315 +1,540 @@
-#include "memory.hpp"
-#include "paging.hpp"
-#include "process.hpp"
-#include "Scheduler.hpp" 
-#include "filesystem.hpp"
-#include "io.hpp"
+﻿#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include "Kernel.hpp"
+
+#include <algorithm>
+#include <cctype>
 #include <iostream>
-#include <limits>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
 
-static void pausa(const char *mensaje = "Presione Enter para continuar...")
+namespace
 {
-    std::cout << "\n>>> " << mensaje << " ";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-}
+constexpr UINT WM_APP_APPEND_TEXT = WM_APP + 1;
+constexpr UINT WM_APP_SET_STATUS = WM_APP + 2;
+constexpr UINT WM_APP_SCENARIO_DONE = WM_APP + 3;
 
-static void titulo(const char *texto)
+constexpr int kBtnCpuMemory = 101;
+constexpr int kBtnIo = 102;
+constexpr int kQuantumInputId = 201;
+constexpr int kCpuInputId = 202;
+constexpr int kIoInputId = 203;
+constexpr int kOutputId = 204;
+constexpr int kStatusId = 205;
+constexpr int kMargin = 12;
+constexpr int kGap = 8;
+constexpr int kButtonWidth = 160;
+constexpr int kButtonHeight = 28;
+constexpr int kInputHeight = 110;
+constexpr int kOutputMinHeight = 220;
+
+enum class ScenarioKind
 {
-    const int ancho = 60;
-    std::cout << "\n"
-              << std::string(ancho, '=') << "\n";
-    std::cout << "  " << texto << "\n";
-    std::cout << std::string(ancho, '=') << "\n\n";
-}
+    CpuMemory,
+    Io
+};
 
-static void seccion(const char *texto)
+struct AppState
 {
-    std::cout << "\n--- " << texto << " ---\n\n";
-}
+    HWND btnCpu = nullptr;
+    HWND btnIo = nullptr;
+    HWND quantumLabel = nullptr;
+    HWND quantumInput = nullptr;
+    HWND cpuInput = nullptr;
+    HWND ioInput = nullptr;
+    HWND output = nullptr;
+    HWND status = nullptr;
+    bool busy = false;
+};
 
-static void limpiarBuffer()
+class WindowStdoutBuf final : public std::streambuf
 {
-    std::cin.clear();
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-}
+public:
+    explicit WindowStdoutBuf(HWND hwnd) : hwnd_(hwnd) {}
 
-static void demoFase1()
-{
-    titulo("FASE 1: Gestion de Procesos (Round-Robin)");
-
-    // Crear procesos
-    // Constructor de tu Process: (pid, name, burstTime, memSize)
-    Process p1(1, "Editor",      9, 200);
-    Process p2(2, "Compilador",  6, 150);
-    Process p3(3, "Player",      4, 100);
-    Process p4(4, "Browser",     7, 180);
-
-    seccion("Estado inicial — todos en NEW");
-    std::cout << p1.toString() << "\n";
-    std::cout << p2.toString() << "\n";
-    std::cout << p3.toString() << "\n";
-    std::cout << p4.toString() << "\n";
-    pausa();
-
-    // Encolar: NEW a READY
-    Scheduler sched(3); // quantum = 3 ticks
-    seccion("Encolando procesos: NEW → READY");
-    sched.enqueue(&p1);
-    sched.enqueue(&p2);
-    sched.enqueue(&p3);
-    sched.enqueue(&p4);
-    sched.printQueue();
-    pausa();
-
-    // Round-Robin paso a paso
-    seccion("Planificacion Round-Robin — turno a turno");
-    std::cout << "Se ejecuta un quantum (3 ticks) por turno.\n"
-              << "Si el proceso no termina, vuelve al final de la cola.\n\n";
-
-    int turno = 1;
-    while (!sched.isEmpty())
+protected:
+    int overflow(int ch) override
     {
-        std::cout << "\n── Turno " << turno++ << " ──\n";
-        sched.runQuantum();
+        if (ch == traits_type::eof())
+            return sync() == 0 ? 0 : traits_type::eof();
+
+        buffer_.push_back(static_cast<char>(ch));
+        if (ch == '\n')
+            flushBuffer();
+        return ch;
     }
-    pausa();
 
-    // Estado final
-    seccion("Estado final — todos TERMINATED");
-    std::cout << p1.toString() << "\n";
-    std::cout << p2.toString() << "\n";
-    std::cout << p3.toString() << "\n";
-    std::cout << p4.toString() << "\n";
-
-    std::cout << "\nTiempo total simulado: " << sched.getClock() << " ticks\n";
-    pausa("Presione Enter para volver al menu principal");
-}
-
-static void demoFase2()
-{
-    titulo("FASE 2: Gestion de Memoria (First-Fit + Paginacion)");
-
-    MemoryManager mem;
-    PagingUnit paging;
-
-    seccion("Estado inicial de la memoria (1024 unidades libres)");
-    mem.printMap();
-    pausa();
-
-    seccion("Asignando memoria a 3 procesos (algoritmo First-Fit)");
-    std::cout << "- PID 1: 200 unidades\n";
-    std::cout << "- PID 2: 300 unidades\n";
-    std::cout << "- PID 3: 128 unidades\n\n";
-
-    int a1 = mem.allocate(1, 200);
-    int a2 = mem.allocate(2, 300);
-    int a3 = mem.allocate(3, 128);
-    mem.printMap();
-    pausa();
-
-    seccion("Creando tablas de paginas (PAGE_SIZE=64, 16 marcos)");
-    if (a1 != -1)
+    int sync() override
     {
-        paging.createTable(1, a1, 200);
-        paging.printTable(1);
+        flushBuffer();
+        return 0;
     }
-    pausa("Presione Enter para ver la tabla del Proceso 2");
-    if (a2 != -1)
+
+private:
+    void flushBuffer()
     {
-        paging.createTable(2, a2, 300);
-        paging.printTable(2);
+        if (buffer_.empty())
+            return;
+
+        auto *payload = new std::string(buffer_);
+        PostMessageA(hwnd_, WM_APP_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(payload));
+        buffer_.clear();
     }
-    pausa("Presione Enter para ver la tabla del Proceso 3");
-    if (a3 != -1)
+
+    HWND hwnd_;
+    std::string buffer_;
+};
+
+class ScopedCoutRedirect
+{
+public:
+    explicit ScopedCoutRedirect(std::streambuf *replacement)
+        : oldBuf_(std::cout.rdbuf(replacement))
     {
-        paging.createTable(3, a3, 128);
-        paging.printTable(3);
     }
-    pausa();
 
-    seccion("Traduccion de direcciones logicas a fisicas (Proceso 2)");
-    std::cout << "Direccion logica 0   -> primera pagina, offset 0\n";
-    paging.translate(2, 0);
-    std::cout << "\nDireccion logica 64  -> segunda pagina, offset 0\n";
-    paging.translate(2, 64);
-    std::cout << "\nDireccion logica 127 -> segunda pagina, offset 63\n";
-    paging.translate(2, 127);
-    std::cout << "\nDireccion logica 700 -> FUERA DE RANGO (fallo de pagina)\n";
-    paging.translate(2, 700);
-    pausa();
+    ScopedCoutRedirect(const ScopedCoutRedirect &) = delete;
+    ScopedCoutRedirect &operator=(const ScopedCoutRedirect &) = delete;
 
-    seccion("Liberando PID 2 -> se crea un hueco (fragmentacion)");
-    mem.free(2);
-    paging.removeTable(2);
-    mem.printMap();
-    pausa();
-
-    seccion("Intentando asignar 350 unidades (fragmentacion externa)");
-    std::cout << "Total libre: 724 unidades, pero no hay bloque contiguo >= 350\n\n";
-    mem.allocate(4, 350);
-    pausa();
-
-    seccion("Liberando PID 1 -> COALESCING fusiona bloques adyacentes");
-    mem.free(1);
-    paging.removeTable(1);
-    mem.printMap();
-    std::cout << "RESULTADO: Los dos huecos contiguos se fusionaron en uno de 500 unidades\n";
-    pausa();
-
-    seccion("Ahora SI se puede asignar el bloque de 350 unidades");
-    int a4 = mem.allocate(4, 350);
-    if (a4 != -1)
-        paging.createTable(4, a4, 350);
-    mem.printMap();
-    pausa("Presione Enter para volver al menu principal");
-}
-
-static void demoFase3()
-{
-    titulo("FASE 3: Sistema de Archivos y E/S");
-
-    FileSystem fs;
-    IOManager io;
-
-    seccion("Estado inicial del sistema de archivos");
-    fs.printDirectory();
-    pausa();
-
-    seccion("Creando archivos en el sistema (PID 1)");
-    std::cout << "Creando 3 archivos:\n";
-    std::cout << "- datos.txt (256 bytes)\n";
-    std::cout << "- config.ini (128 bytes)\n";
-    std::cout << "- log.txt (64 bytes)\n\n";
-
-    fs.create("datos.txt", 256, 1);
-    fs.create("config.ini", 128, 1);
-    fs.create("log.txt", 64, 1);
-    fs.printDirectory();
-    pausa();
-
-    seccion("Abriendo archivo para lectura (PID 2)");
-    std::cout << "PID 2 intenta abrir 'datos.txt'...\n\n";
-    fs.open("datos.txt", 2);
-    fs.printDirectory();
-    pausa();
-
-    seccion("Solicitando operaciones de E/S");
-    std::cout << "PID 2 solicita READ de 'datos.txt'\n";
-    std::cout << "PID 1 solicita WRITE de 'config.ini'\n";
-    std::cout << "PID 3 solicita READ de 'log.txt'\n\n";
-
-    io.requestIO(2, IOType::READ, "datos.txt");
-    io.requestIO(1, IOType::WRITE, "config.ini");
-    io.requestIO(3, IOType::READ, "log.txt");
-    io.printQueue();
-    pausa();
-
-    seccion("Procesando E/S - Ciclo 1 (latencia: 3 ciclos)");
-    io.processIO();
-    io.printStatus();
-    pausa("Presione Enter para siguiente ciclo");
-
-    seccion("Procesando E/S - Ciclo 2");
-    io.processIO();
-    io.printStatus();
-    pausa("Presione Enter para siguiente ciclo");
-
-    seccion("Procesando E/S - Ciclo 3 (interrupcion)");
-    std::cout << "Al completarse, se genera una INTERRUPCION de E/S\n\n";
-    io.processIO();
-    io.printQueue();
-    pausa();
-
-    seccion("Continuando con la siguiente operacion en cola");
-    io.processIO(); // Ciclo 1 de WRITE
-    io.processIO(); // Ciclo 2 de WRITE
-    io.processIO(); // Ciclo 3 de WRITE (completa)
-    io.printQueue();
-    pausa();
-
-    seccion("Cerrando archivo (PID 2)");
-    std::cout << "PID 2 cierra 'datos.txt'...\n\n";
-    fs.close("datos.txt", 2);
-    fs.printDirectory();
-    pausa();
-
-    seccion("Intentando eliminar archivo abierto (validacion)");
-    std::cout << "PID 1 intenta eliminar 'config.ini' (deberia fallar)...\n\n";
-    fs.remove("config.ini", 1);
-    pausa();
-
-    seccion("Cerrando y eliminando archivo correctamente");
-    std::cout << "PID 3 cierra 'log.txt' y luego lo elimina...\n\n";
-    fs.open("log.txt", 3);
-    fs.close("log.txt", 3);
-    fs.remove("log.txt", 3);
-    fs.printDirectory();
-
-    pausa("Presione Enter para volver al menu principal");
-}
-
-static void demoCompleta()
-{
-    titulo("DEMOSTRACION COMPLETA: Kernel Integrado");
-    std::cout << "\nEn desarrollo...\n\n";
-    pausa("Presione Enter para volver al menu principal");
-}
-
-static void mostrarMenu()
-{
-    std::cout << "\n";
-    std::cout << "============================================================\n";
-    std::cout << "     MINI-KERNEL DE DEMOSTRACION - SISTEMAS OPERATIVOS     \n";
-    std::cout << "   Universidad Distrital Francisco Jose de Caldas - 2026   \n";
-    std::cout << "============================================================\n\n";
-    std::cout << "Seleccione una opcion:\n\n";
-    std::cout << "  1. Fase 1 - Gestion de Procesos        \n";
-    std::cout << "  2. Fase 2 - Gestion de Memoria         \n";
-    std::cout << "  3. Fase 3 - Sistema de Archivos y E/S  \n";
-    std::cout << "  4. Demostracion Completa (Kernel)      \n";
-    std::cout << "  5. Salir\n\n";
-    std::cout << "Opcion: ";
-}
-
-int main()
-{
-    int opcion = 0;
-
-    while (true)
+    ~ScopedCoutRedirect()
     {
-        mostrarMenu();
-        std::cin >> opcion;
+        std::cout.rdbuf(oldBuf_);
+    }
 
-        if (std::cin.fail())
+private:
+    std::streambuf *oldBuf_;
+};
+
+static std::string trim(const std::string &s)
+{
+    std::size_t start = 0;
+    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start])))
+        ++start;
+
+    std::size_t end = s.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1])))
+        --end;
+
+    return s.substr(start, end - start);
+}
+
+static std::string readControlText(HWND hwnd)
+{
+    int len = GetWindowTextLengthA(hwnd);
+    if (len <= 0) return "";
+    
+    std::string text(len, '\0');
+    GetWindowTextA(hwnd, text.data(), len + 1);
+    return text;
+}
+
+static int readPositiveInt(HWND hwnd, int fallback, std::string &error)
+{
+    std::string text = trim(readControlText(hwnd));
+    if (text.empty())
+        return fallback;
+
+    try
+    {
+        size_t idx = 0;
+        int value = std::stoi(text, &idx);
+        if (idx != text.size() || value <= 0)
         {
-            limpiarBuffer();
-            std::cout << "\n[ERROR] Opcion invalida. Intente de nuevo.\n";
+            error = "El quantum debe ser un entero positivo.";
+            return fallback;
+        }
+        return value;
+    }
+    catch (const std::exception&)
+    {
+        error = "El quantum debe ser un entero positivo.";
+        return fallback;
+    }
+}
+
+static void setWindowTextFromString(HWND hwnd, const std::string &text)
+{
+    SetWindowTextA(hwnd, text.c_str());
+}
+
+static void appendToOutput(HWND output, const std::string &text)
+{
+    int len = GetWindowTextLengthA(output);
+    SendMessageA(output, EM_SETSEL, len, len);
+    SendMessageA(output, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text.c_str()));
+    SendMessageA(output, EM_SCROLLCARET, 0, 0);
+}
+
+static void clearOutput(HWND output)
+{
+    SetWindowTextA(output, "");
+}
+
+static std::vector<Kernel::CpuProcessSpec> parseCpuSpecs(const std::string &text, std::string &error)
+{
+    std::vector<Kernel::CpuProcessSpec> specs;
+    std::istringstream input(text);
+    std::string line;
+
+    while (std::getline(input, line))
+    {
+        line = trim(line);
+        if (line.empty())
             continue;
-        }
 
-        limpiarBuffer();
-
-        switch (opcion)
+        std::istringstream row(line);
+        Kernel::CpuProcessSpec spec;
+        if (!(row >> spec.name >> spec.burstTime >> spec.memSize))
         {
-        case 1:
-            demoFase1();
-            break;
-        case 2:
-            demoFase2();
-            break;
-        case 3:
-            demoFase3();
-            break;
-        case 4:
-            demoCompleta();
-            break;
-        case 5:
-            std::cout << "\nGracias por usar el Mini-Kernel!\n\n";
-            return 0;
-        default:
-            std::cout << "\n[ERROR] Opcion invalida. Seleccione 1-5.\n";
+            error = "Formato invalido en CPU+memoria. Usa: Nombre, Tiempo total de CPU, Memoria necesaria. Una linea por proceso.";
+            return {};
         }
+
+        specs.push_back(spec);
     }
 
-    return 0;
+    if (specs.empty())
+        error = "Ingresa al menos un proceso para CPU+memoria.";
+
+    return specs;
+}
+
+static std::vector<Kernel::IoProcessSpec> parseIoSpecs(const std::string &text, std::string &error)
+{
+    std::vector<Kernel::IoProcessSpec> specs;
+    std::istringstream input(text);
+    std::string line;
+
+    while (std::getline(input, line))
+    {
+        line = trim(line);
+        if (line.empty())
+            continue;
+
+        std::istringstream row(line);
+        Kernel::IoProcessSpec spec;
+        if (!(row >> spec.name >> spec.burstTime >> spec.memSize >> spec.ioAtTick))
+        {
+            error = "Formato invalido en E/S. Usa: Nombre, Tiempo de CPU, Memoria necesaria, Tick antes de cambio. Una linea por proceso.";
+            return {};
+        }
+
+        specs.push_back(spec);
+    }
+
+    if (specs.empty())
+        error = "Ingresa al menos un proceso para E/S.";
+
+    return specs;
+}
+
+static void refreshButtons(AppState *state)
+{
+    const bool enabled = !state->busy;
+    EnableWindow(state->btnCpu, enabled);
+    EnableWindow(state->btnIo, enabled);
+    EnableWindow(state->quantumInput, enabled);
+    EnableWindow(state->cpuInput, enabled);
+    EnableWindow(state->ioInput, enabled);
+}
+
+static void resizeLayout(HWND hwnd, AppState *state)
+{
+    if (!state)
+        return;
+
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    int width = rc.right - rc.left;
+    int height = rc.bottom - rc.top;
+
+    int topY = kMargin + 168;
+    int buttonY = topY;
+    int buttonTotalWidth = 2 * kButtonWidth + kGap;
+    int startX = ((width - buttonTotalWidth) / 2 > kMargin) ? ((width - buttonTotalWidth) / 2) : kMargin;
+
+    MoveWindow(state->quantumLabel, kMargin, buttonY + 5, 68, 18, TRUE);
+    MoveWindow(state->quantumInput, kMargin + 86, buttonY + 2, 72, 24, TRUE);
+    MoveWindow(state->btnCpu, startX, buttonY, kButtonWidth, kButtonHeight, TRUE);
+    MoveWindow(state->btnIo, startX + kButtonWidth + kGap, buttonY, kButtonWidth, kButtonHeight, TRUE);
+
+    int inputTop = buttonY + kButtonHeight + 18;
+    int halfWidth = (width - 3 * kMargin) / 2;
+    int inputHeight = kInputHeight;
+    if (inputHeight < 110)
+        inputHeight = 110;
+
+    MoveWindow(state->cpuInput, kMargin, inputTop, halfWidth, inputHeight, TRUE);
+    MoveWindow(state->ioInput, kMargin * 2 + halfWidth, inputTop, width - (kMargin * 3) - halfWidth, inputHeight, TRUE);
+
+    int outputTop = inputTop + inputHeight + 40;
+    int outputHeight = height - outputTop - kMargin;
+    if (outputHeight < kOutputMinHeight)
+        outputHeight = kOutputMinHeight;
+
+    MoveWindow(state->status, kMargin, outputTop - 22, width - 2 * kMargin, 18, TRUE);
+    MoveWindow(state->output, kMargin, outputTop, width - 2 * kMargin, outputHeight, TRUE);
+}
+
+static void postString(HWND hwnd, UINT message, const std::string &text)
+{
+    PostMessageA(hwnd, message, 0, reinterpret_cast<LPARAM>(new std::string(text)));
+}
+
+static void runScenarioAsync(HWND hwnd, ScenarioKind kind)
+{
+    auto *state = reinterpret_cast<AppState *>(GetWindowLongPtrA(hwnd, GWLP_USERDATA));
+    if (!state || state->busy)
+        return;
+
+    std::string inputText = (kind == ScenarioKind::CpuMemory) ? readControlText(state->cpuInput) : readControlText(state->ioInput);
+    std::string quantumError;
+    int quantum = readPositiveInt(state->quantumInput, 3, quantumError);
+    if (!quantumError.empty())
+    {
+        setWindowTextFromString(state->status, "Estado: error de entrada");
+        clearOutput(state->output);
+        appendToOutput(state->output, quantumError + "\r\n");
+        return;
+    }
+
+    state->busy = true;
+    refreshButtons(state);
+    setWindowTextFromString(state->status, "Estado: cargando la simulacion...");
+    clearOutput(state->output);
+    appendToOutput(state->output, "Cargando...\r\n\r\n");
+
+    std::thread([hwnd, kind, quantum, inputText = std::move(inputText)]() mutable {
+        std::string parseErrorLocal;
+        if (kind == ScenarioKind::CpuMemory)
+        {
+            auto specs = parseCpuSpecs(inputText, parseErrorLocal);
+            if (!parseErrorLocal.empty())
+            {
+                postString(hwnd, WM_APP_SET_STATUS, "Estado: error de entrada");
+                postString(hwnd, WM_APP_APPEND_TEXT, parseErrorLocal + "\r\n");
+                PostMessageA(hwnd, WM_APP_SCENARIO_DONE, 0, 0);
+                return;
+            }
+
+            WindowStdoutBuf buf(hwnd);
+            ScopedCoutRedirect redirect(&buf);
+            Kernel kernel(quantum);
+            kernel.runScenarioCPUAndMemoryContention(specs);
+            std::cout.flush();
+        }
+        else
+        {
+            auto specs = parseIoSpecs(inputText, parseErrorLocal);
+            if (!parseErrorLocal.empty())
+            {
+                postString(hwnd, WM_APP_SET_STATUS, "Estado: error de entrada");
+                postString(hwnd, WM_APP_APPEND_TEXT, parseErrorLocal + "\r\n");
+                PostMessageA(hwnd, WM_APP_SCENARIO_DONE, 0, 0);
+                return;
+            }
+
+            WindowStdoutBuf buf(hwnd);
+            ScopedCoutRedirect redirect(&buf);
+            Kernel kernel(quantum);
+            kernel.runScenarioSimultaneousIO(specs);
+            std::cout.flush();
+        }
+
+        postString(hwnd, WM_APP_SET_STATUS, "Estado: listo");
+        PostMessageA(hwnd, WM_APP_SCENARIO_DONE, 0, 0);
+    }).detach();
+}
+
+static void createControls(HWND hwnd, AppState *state)
+{
+    HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrA(hwnd, GWLP_HINSTANCE));
+    HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+
+    HWND title = CreateWindowExA(0, "STATIC", "Mini-Kernel Demo", WS_CHILD | WS_VISIBLE, kMargin, kMargin, 420, 24, hwnd, nullptr, instance, nullptr);
+    HWND subtitle = CreateWindowExA(0, "STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, kMargin, kMargin + 22, 1160, 116, hwnd, nullptr, instance, nullptr);
+    state->quantumLabel = CreateWindowExA(0, "STATIC", "Quantum", WS_CHILD | WS_VISIBLE, kMargin, kMargin + 150, 68, 18, hwnd, nullptr, instance, nullptr);
+
+    state->btnCpu = CreateWindowExA(0, "BUTTON", "CPU + memoria", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(kBtnCpuMemory), instance, nullptr);
+    state->btnIo = CreateWindowExA(0, "BUTTON", "E/S simultanea", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(kBtnIo), instance, nullptr);
+    state->quantumInput = CreateWindowExA(
+        WS_EX_CLIENTEDGE,
+        "EDIT",
+        "3",
+        WS_CHILD | WS_VISIBLE | ES_NUMBER,
+        0,
+        0,
+        0,
+        0,
+        hwnd,
+        reinterpret_cast<HMENU>(kQuantumInputId),
+        instance,
+        nullptr);
+
+    state->cpuInput = CreateWindowExA(
+        WS_EX_CLIENTEDGE,
+        "EDIT",
+        "P_A 10 400\r\nP_B 8 400\r\nP_C 6 300\r\nP_D 12 200\r\n",
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL,
+        0, 0, 0, 0,
+        hwnd, reinterpret_cast<HMENU>(kCpuInputId), instance, nullptr);
+
+    state->ioInput = CreateWindowExA(
+        WS_EX_CLIENTEDGE,
+        "EDIT",
+        "P_1 9 100 2\r\nP_2 9 100 2\r\nP_3 6 100 3\r\n",
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL,
+        0, 0, 0, 0,
+        hwnd, reinterpret_cast<HMENU>(kIoInputId), instance, nullptr);
+
+    state->status = CreateWindowExA(0, "STATIC", "Estado: listo", WS_CHILD | WS_VISIBLE, kMargin, 0, 400, 20, hwnd, reinterpret_cast<HMENU>(kStatusId), instance, nullptr);
+
+    state->output = CreateWindowExA(
+        WS_EX_CLIENTEDGE,
+        "EDIT",
+        "",
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | ES_LEFT,
+        0, 0, 0, 0,
+        hwnd, reinterpret_cast<HMENU>(kOutputId), instance, nullptr);
+
+    const HWND controls[] = {title, subtitle, state->quantumLabel, state->btnCpu, state->btnIo, state->quantumInput, state->cpuInput, state->ioInput, state->status, state->output};
+    for (HWND control : controls)
+        SendMessageA(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+
+    SetWindowTextA(
+        subtitle,
+        "Proyecto por:\r\n"
+        "Juan Sebastian Rodriguez Carreno - 2023102017\r\n"
+        "Victor Manuel Torres Beltran - 20211020104\r\n"
+        "Andres Felipe Pulido Suarez - 20211020049\r\n"
+        "Janeth Oliveros Ramirez - 20182020100\r\n\r\n"
+        "La simulacion funciona con dos escenarios editables.\r\n"
+        "CPU + memoria: Nombre, Tiempo Total de CPU y Memoria Requerida.\r\n"
+        "E/S simultanea: Nombre, Tiempo de CPU, memoria y ticks antes de pedir E/S.");
+
+    resizeLayout(hwnd, state);
+}
+
+static void destroyState(HWND hwnd)
+{
+    auto *state = reinterpret_cast<AppState *>(GetWindowLongPtrA(hwnd, GWLP_USERDATA));
+    delete state;
+    SetWindowLongPtrA(hwnd, GWLP_USERDATA, 0);
+}
+
+LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    auto *state = reinterpret_cast<AppState *>(GetWindowLongPtrA(hwnd, GWLP_USERDATA));
+
+    switch (msg)
+    {
+    case WM_CREATE:
+    {
+        auto *created = new AppState();
+        SetWindowLongPtrA(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(created));
+        createControls(hwnd, created);
+        return 0;
+    }
+    case WM_SIZE:
+        resizeLayout(hwnd, state);
+        return 0;
+    case WM_COMMAND:
+        if (state && !state->busy)
+        {
+            switch (LOWORD(wParam))
+            {
+            case kBtnCpuMemory:
+                runScenarioAsync(hwnd, ScenarioKind::CpuMemory);
+                break;
+            case kBtnIo:
+                runScenarioAsync(hwnd, ScenarioKind::Io);
+                break;
+            }
+        }
+        return 0;
+    case WM_APP_APPEND_TEXT:
+    {
+        auto *text = reinterpret_cast<std::string *>(lParam);
+        if (state && state->output && text)
+            appendToOutput(state->output, *text);
+        delete text;
+        return 0;
+    }
+    case WM_APP_SET_STATUS:
+    {
+        auto *text = reinterpret_cast<std::string *>(lParam);
+        if (state && state->status && text)
+            setWindowTextFromString(state->status, *text);
+        delete text;
+        return 0;
+    }
+    case WM_APP_SCENARIO_DONE:
+        if (state)
+        {
+            state->busy = false;
+            refreshButtons(state);
+            setWindowTextFromString(state->status, "Estado: listo");
+        }
+        return 0;
+    case WM_DESTROY:
+        destroyState(hwnd);
+        PostQuitMessage(0);
+        return 0;
+    default:
+        return DefWindowProcA(hwnd, msg, wParam, lParam);
+    }
+}
+} // namespace
+
+int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int showCmd)
+{
+    const char *className = "MiniKernelDemoWindow";
+
+    WNDCLASSA wc{};
+    wc.lpfnWndProc = wndProc;
+    wc.hInstance = instance;
+    wc.lpszClassName = className;
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+
+    if (!RegisterClassA(&wc))
+    {
+        MessageBoxA(nullptr, "No se pudo registrar la ventana principal.", "Mini-Kernel", MB_ICONERROR | MB_OK);
+        return 1;
+    }
+
+    HWND hwnd = CreateWindowExA(
+        0,
+        className,
+        "Mini-Kernel Demo",
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        1200,
+        820,
+        nullptr,
+        nullptr,
+        instance,
+        nullptr);
+
+    if (!hwnd)
+    {
+        MessageBoxA(nullptr, "No se pudo crear la ventana principal.", "Mini-Kernel", MB_ICONERROR | MB_OK);
+        return 1;
+    }
+
+    ShowWindow(hwnd, showCmd);
+    UpdateWindow(hwnd);
+
+    MSG msg{};
+    while (GetMessageA(&msg, nullptr, 0, 0) > 0)
+    {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+
+    return static_cast<int>(msg.wParam);
 }

@@ -18,6 +18,7 @@
 #include <queue>
 #include <vector>
 #include <string>
+#include <functional>
 
 
 class Scheduler
@@ -46,6 +47,19 @@ public:
     // Ejecuta UN quantum sobre el proceso al frente de la cola
     // Retorna true si todavía hay procesos en la cola
     bool runQuantum();
+
+    // Resultado detallado de la ejecución de un quantum
+    struct QuantumResult
+    {
+        Process *proc;     // proceso ejecutado (puede ser nullptr)
+        bool terminated;   // true si el proceso terminó durante el quantum
+        int ticksExecuted; // número de ticks ejecutados en el quantum
+    };
+
+    // Ejecuta un quantum pero permite un 'tickHook' invocado en cada tick.
+    // Si 'tickHook' retorna true, el proceso será bloqueado (estado BLOCKED)
+    // y no se reencolará. El hook recibe (Process*, tickIndex).
+    QuantumResult runQuantumDetailed(const std::function<bool(Process *, int)> &tickHook = nullptr);
 
     // Ejecuta el ciclo completo Round-Robin hasta vaciar la cola
     void runAll();

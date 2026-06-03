@@ -1,22 +1,32 @@
 #include "paging.hpp"
-#include <iostream>
-#include <iomanip>
 
-void PagingUnit::createTable(int pid, int memStart, int memSize)
+#include <iomanip>
+#include <iostream>
+
+namespace
+{
+std::string describeProcess(int pid, const std::string &name)
+{
+    if (!name.empty())
+        return "Proceso '" + name + "'";
+    return "Proceso " + std::to_string(pid);
+}
+} // namespace
+
+void PagingUnit::createTable(int pid, int memStart, int memSize, const std::string &processName)
 {
     if (tables_.count(pid))
     {
-        std::cout << "[PagingUnit] WARN: Tabla para PID=" << pid
+        std::cout << "[PagingUnit] aviso: tabla para "
+                  << describeProcess(pid, processName)
                   << " ya existe. Sobreescribiendo.\n";
     }
 
     std::unordered_map<int, int> table;
 
-    // Se calcula cuántas páginas necesita el proceso.
     int pageCount = (memSize + PAGE_SIZE - 1) / PAGE_SIZE;
     int baseFrame = memStart / PAGE_SIZE;
 
-    // Mapeo lógico -> físico simplificado.
     for (int i = 0; i < pageCount; ++i)
     {
         table[i] = baseFrame + i;
@@ -24,35 +34,37 @@ void PagingUnit::createTable(int pid, int memStart, int memSize)
 
     tables_[pid] = std::move(table);
 
-    std::cout << "[PagingUnit] Tabla creada para PID=" << pid
-              << " — " << pageCount << " página(s)"
-              << " — marco base=" << baseFrame << "\n";
+    std::cout << "[PagingUnit] tabla de paginas: " << processName 
+              << " (" << pageCount << " paginas)\n";
 }
 
-void PagingUnit::removeTable(int pid)
+void PagingUnit::removeTable(int pid, const std::string &processName)
 {
     if (tables_.erase(pid))
     {
-        std::cout << "[PagingUnit] Tabla eliminada para PID=" << pid << "\n";
+        std::cout << "[PagingUnit] tabla eliminada: "
+                  << describeProcess(pid, processName) << "\n";
     }
     else
     {
-        std::cout << "[PagingUnit] WARN: No existe tabla para PID=" << pid << "\n";
+        std::cout << "[PagingUnit] aviso: sin tabla para "
+                  << describeProcess(pid, processName) << "\n";
     }
 }
 
-int PagingUnit::translate(int pid, int logicalAddr) const
+int PagingUnit::translate(int pid, int logicalAddr, const std::string &processName) const
 {
     if (logicalAddr < 0)
     {
-        std::cout << "[PagingUnit] ERROR: Dirección lógica negativa\n";
+        std::cout << "[PagingUnit] error: dir logica negativa\n";
         return -1;
     }
 
     auto it = tables_.find(pid);
     if (it == tables_.end())
     {
-        std::cout << "[PagingUnit] ERROR: Sin tabla para PID=" << pid << "\n";
+        std::cout << "[PagingUnit] error: sin tabla para "
+                  << describeProcess(pid, processName) << "\n";
         return -1;
     }
 
@@ -63,45 +75,28 @@ int PagingUnit::translate(int pid, int logicalAddr) const
     auto fit = table.find(pageNum);
     if (fit == table.end() || fit->second == -1)
     {
-        std::cout << "[PagingUnit] FALLO DE PÁGINA — PID=" << pid
-                  << " dirección lógica=" << logicalAddr
-                  << " página=" << pageNum << "\n";
+        std::cout << "[PagingUnit] fallo de pagina: " << processName << "\n";
         return -1;
     }
 
-    int physicalAddr = fit->second * PAGE_SIZE + offset;
-
-    std::cout << "[PagingUnit] Traducción PID=" << pid
-              << " lógica=" << logicalAddr
-              << " → página=" << pageNum
-              << " marco=" << fit->second
-              << " offset=" << offset
-              << " física=" << physicalAddr << "\n";
-
-    return physicalAddr;
+    return fit->second * PAGE_SIZE + offset;
 }
 
-void PagingUnit::printTable(int pid) const
+void PagingUnit::printTable(int pid, const std::string &processName) const
 {
     auto it = tables_.find(pid);
     if (it == tables_.end())
     {
-        std::cout << "[PagingUnit] No hay tabla de páginas para PID=" << pid << "\n";
+        std::cout << "[PagingUnit] No hay tabla de paginas para "
+                  << describeProcess(pid, processName) << "\n";
         return;
     }
 
-    const std::string LINE(44, '=');
-    const std::string LINE_S(44, '-');
-    std::cout << "\n+" << LINE << "+\n";
-    std::cout << "|  Tabla de Paginas - PID=" << std::setw(3) << pid
-              << "                  |\n";
-    std::cout << "+" << LINE << "+\n";
-    std::cout << "| " << std::left
-              << std::setw(14) << "Pag. Logica"
-              << std::setw(14) << "Marco Fisico"
-              << std::setw(16) << "Dir. Fisica"
-              << "|\n";
-    std::cout << "+" << LINE_S << "+\n";
+    std::cout << "\nTabla de paginas: " << processName << "\n";
+    std::cout << std::left
+              << std::setw(16) << "Pagina"
+              << std::setw(16) << "Marco"
+              << "Estado\n";
 
     const auto &table = it->second;
     int maxPage = -1;
@@ -117,12 +112,9 @@ void PagingUnit::printTable(int pid) const
         if (fit == table.end())
             continue;
 
-        std::cout << "| "
-                  << std::setw(14) << fit->first
-                  << std::setw(14) << fit->second
-                  << std::setw(16) << (fit->second * PAGE_SIZE)
-                  << "|\n";
+        std::cout << std::left
+                  << std::setw(16) << fit->first
+                  << std::setw(16) << fit->second
+                  << "ok\n";
     }
-
-    std::cout << "+" << std::string(44, '=') << "+\n\n";
 }

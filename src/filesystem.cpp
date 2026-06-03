@@ -1,143 +1,145 @@
 #include "filesystem.hpp"
-#include <iostream>
+
 #include <iomanip>
+#include <iostream>
+
+namespace
+{
+std::string describeProcess(int pid, const std::string &name)
+{
+    if (!name.empty())
+        return "Proceso '" + name + "'";
+    return "Proceso " + std::to_string(pid);
+}
+} // namespace
 
 FileSystem::FileSystem() : fileCount_(0)
 {
-    std::cout << "[FileSystem] Sistema de archivos inicializado (max "
+    std::cout << "[FileSystem] fs inicializado (max "
               << MAX_FILES << " archivos)\n";
 }
 
-bool FileSystem::create(const std::string &name, int size, int pid)
+bool FileSystem::create(const std::string &name, int size, int pid, const std::string &processName)
 {
-    // Validaciones básicas
     if (name.empty())
     {
-        std::cout << "[FileSystem] ERROR: Nombre de archivo vacío\n";
+        std::cout << "[FileSystem] error: nombre vacio\n";
         return false;
     }
 
     if (size <= 0 || size > MAX_FILE_SIZE)
     {
-        std::cout << "[FileSystem] ERROR: Tamaño inválido (" << size
-                  << "). Debe estar entre 1 y " << MAX_FILE_SIZE << "\n";
+        std::cout << "[FileSystem] error: tamano invalido (" << size << ")\n";
         return false;
     }
 
     if (fileCount_ >= MAX_FILES)
     {
-        std::cout << "[FileSystem] ERROR: Sistema de archivos lleno (max "
-                  << MAX_FILES << " archivos)\n";
+        std::cout << "[FileSystem] error: fs lleno\n";
         return false;
     }
 
-    // Verificar si ya existe
     if (directory_.find(name) != directory_.end())
     {
-        std::cout << "[FileSystem] ERROR: El archivo '" << name
-                  << "' ya existe\n";
+        std::cout << "[FileSystem] error: '" << name << "' ya existe\n";
         return false;
     }
 
-    // Crear el FCB
     FCB fcb;
     fcb.name = name;
     fcb.size = size;
     fcb.createdBy = pid;
+    fcb.createdByName = processName;
     fcb.isOpen = false;
     fcb.openedBy = -1;
+    fcb.openedByName.clear();
 
     directory_[name] = fcb;
     fileCount_++;
 
-    std::cout << "[FileSystem] Archivo creado: '" << name << "' ("
-              << size << " bytes) por PID=" << pid << "\n";
+    std::cout << "[FileSystem] archivo creado: '" << name << "' por " << processName << "\n";
     return true;
 }
 
-bool FileSystem::open(const std::string &name, int pid)
+bool FileSystem::open(const std::string &name, int pid, const std::string &processName)
 {
     auto it = directory_.find(name);
 
     if (it == directory_.end())
     {
-        std::cout << "[FileSystem] ERROR: Archivo '" << name
-                  << "' no encontrado\n";
+        std::cout << "[FileSystem] error: '" << name << "' no encontrado\n";
         return false;
     }
 
     if (it->second.isOpen)
     {
-        std::cout << "[FileSystem] ERROR: Archivo '" << name
-                  << "' ya está abierto por PID=" << it->second.openedBy << "\n";
+        std::cout << "[FileSystem] error: '" << name << "' ya abierto por "
+                  << it->second.openedByName << "\n";
         return false;
     }
 
     it->second.isOpen = true;
     it->second.openedBy = pid;
-
-    std::cout << "[FileSystem] Archivo abierto: '" << name
-              << "' por PID=" << pid << "\n";
+    it->second.openedByName = processName;
+    
+    std::cout << "[FileSystem] archivo abierto: '" << name << "'\n";
     return true;
 }
 
-bool FileSystem::close(const std::string &name, int pid)
+bool FileSystem::close(const std::string &name, int pid, const std::string &processName)
 {
     auto it = directory_.find(name);
 
     if (it == directory_.end())
     {
-        std::cout << "[FileSystem] ERROR: Archivo '" << name
-                  << "' no encontrado\n";
+        std::cout << "[FileSystem] error: '" << name << "' no encontrado\n";
         return false;
     }
 
     if (!it->second.isOpen)
     {
-        std::cout << "[FileSystem] ERROR: Archivo '" << name
-                  << "' no está abierto\n";
+        std::cout << "[FileSystem] error: '" << name << "' no abierto\n";
         return false;
     }
 
     if (it->second.openedBy != pid)
     {
-        std::cout << "[FileSystem] ERROR: PID=" << pid
-                  << " no tiene permiso para cerrar '" << name
-                  << "' (abierto por PID=" << it->second.openedBy << ")\n";
+        std::cout << "[FileSystem] error: "
+                  << describeProcess(pid, processName)
+                  << " no es dueno de '" << name << "'\n";
         return false;
     }
 
     it->second.isOpen = false;
     it->second.openedBy = -1;
-
-    std::cout << "[FileSystem] Archivo cerrado: '" << name
-              << "' por PID=" << pid << "\n";
+    it->second.openedByName.clear();
+    
+    std::cout << "[FileSystem] archivo cerrado: '" << name << "'\n";
     return true;
 }
 
-bool FileSystem::remove(const std::string &name, int pid)
+bool FileSystem::remove(const std::string &name, int pid, const std::string &processName)
 {
+    (void)pid; // Evitar advertencia de parametro no usado
+
     auto it = directory_.find(name);
 
     if (it == directory_.end())
     {
-        std::cout << "[FileSystem] ERROR: Archivo '" << name
-                  << "' no encontrado\n";
+        std::cout << "[FileSystem] error: '" << name << "' no encontrado\n";
         return false;
     }
 
     if (it->second.isOpen)
     {
-        std::cout << "[FileSystem] ERROR: No se puede eliminar '" << name
-                  << "' (está abierto por PID=" << it->second.openedBy << ")\n";
+        std::cout << "[FileSystem] error: no se puede eliminar '" << name << "' abierto\n";
         return false;
     }
 
     directory_.erase(it);
     fileCount_--;
-
-    std::cout << "[FileSystem] Archivo eliminado: '" << name
-              << "' por PID=" << pid << "\n";
+    
+    std::cout << "[FileSystem] archivo eliminado: '" << name << "' por " << processName << "\n";
     return true;
 }
 
@@ -148,48 +150,35 @@ bool FileSystem::exists(const std::string &name) const
 
 void FileSystem::printDirectory() const
 {
-    const int ancho = 70;
-
-    std::cout << "\n+" << std::string(ancho, '=') << "+\n";
-    std::cout << "|  DIRECTORIO RAIZ (" << fileCount_ << "/" << MAX_FILES
-              << " archivos)";
-    std::cout << std::string(ancho - 28 - (fileCount_ >= 10 ? 1 : 0), ' ') << "|\n";
-    std::cout << "+" << std::string(ancho, '=') << "+\n";
+    std::cout << "\nDirectorio (" << fileCount_ << "/" << MAX_FILES << "):\n";
 
     if (directory_.empty())
     {
-        std::cout << "| " << std::string(ancho - 2, ' ') << "|\n";
-        std::cout << "|  (Directorio vacio)"
-                  << std::string(ancho - 22, ' ') << "|\n";
-        std::cout << "| " << std::string(ancho - 2, ' ') << "|\n";
+        std::cout << " (vacio)\n";
     }
     else
     {
-        std::cout << "| Nombre" << std::string(14, ' ')
-                  << "Tamanio  Creado  Estado"
-                  << std::string(13, ' ') << "|\n";
-        std::cout << "+" << std::string(ancho, '-') << "+\n";
+        std::cout << std::left << std::setw(20) << "Nombre"
+                  << "Tamano  Creado  Estado"
+                  << "\n";
 
         for (const auto &entry : directory_)
         {
             const FCB &fcb = entry.second;
 
-            std::cout << "| " << std::left << std::setw(20) << fcb.name;
+            std::cout << std::left << std::setw(20) << fcb.name;
             std::cout << std::right << std::setw(6) << fcb.size << "B  ";
-            std::cout << "PID=" << std::setw(2) << fcb.createdBy << "  ";
+            std::cout << std::left << std::setw(18) << describeProcess(fcb.createdBy, fcb.createdByName) << "  ";
 
             if (fcb.isOpen)
             {
-                std::cout << "ABIERTO (PID=" << fcb.openedBy << ")";
-                int padding = 16 - (fcb.openedBy >= 10 ? 1 : 0);
-                std::cout << std::string(padding, ' ') << "|\n";
+                std::string owner = describeProcess(fcb.openedBy, fcb.openedByName);
+                std::cout << "abierto (" << owner << ")\n";
             }
             else
             {
-                std::cout << "CERRADO" << std::string(16, ' ') << "|\n";
+                std::cout << "cerrado\n";
             }
         }
     }
-
-    std::cout << "+" << std::string(ancho, '=') << "+\n\n";
 }

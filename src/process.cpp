@@ -1,4 +1,5 @@
 #include "process.hpp"
+
 #include <sstream>
 
 Process::Process(int pid, const std::string &name, int burstTime, int memSize)
@@ -30,15 +31,15 @@ static const char *stateStr(ProcessState s)
     switch (s)
     {
     case ProcessState::NEW:
-        return "NEW";
+        return "nuevo";
     case ProcessState::READY:
-        return "READY";
+        return "listo";
     case ProcessState::RUNNING:
-        return "RUNNING";
+        return "ejecutando";
     case ProcessState::BLOCKED:
-        return "BLOCKED";
+        return "bloqueado";
     case ProcessState::TERMINATED:
-        return "TERMINATED";
+        return "terminado";
     }
     return "?";
 }
@@ -46,11 +47,9 @@ static const char *stateStr(ProcessState s)
 std::string Process::toString() const
 {
     std::ostringstream oss;
-    oss << "[PID=" << pid_
-        << " name=" << name_
+    oss << "[Proceso=" << name_
         << " state=" << stateStr(state_)
-        << " rem=" << remainingTime_
-        << " memBase=" << memoryStart_
+        << " Tiempo restante=" << remainingTime_
         << " memSz=" << memorySize_ << "]";
     return oss.str();
 }

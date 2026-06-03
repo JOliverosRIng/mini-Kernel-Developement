@@ -1,137 +1,140 @@
 #include "Scheduler.hpp"
-#include <iostream>
-#include <iomanip>
-#include <algorithm>
 
-// Constructor
+#include <algorithm>
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+#include <thread>
+
 Scheduler::Scheduler(int quantum)
     : quantum_(quantum), clock_(0)
 {
-    std::cout << "[Scheduler] Inicializado — quantum=" << quantum_ << " ticks\n";
+    std::cout << "[Scheduler] Inicializado - quantum=" << quantum_ << " ticks\n";
 }
 
-// printSection
-//es una función auxiliar para imprimir títulos de sección con formato
 void Scheduler::printSection(const std::string &title) const
 {
-    const int W = 52;
-    std::cout << "\n+" << std::string(W, '-') << "+\n";
-    std::cout << "|  " << std::left << std::setw(W - 2) << title << "|\n";
-    std::cout << "+" << std::string(W, '-') << "+\n";
+    std::cout << "\n" << title << ":\n";
 }
 
-// enqueue - Cola de listos
-// NEW READY: el proceso entra a la cola de listos
 void Scheduler::enqueue(Process *p)
 {
     if (p->getState() == ProcessState::TERMINATED)
     {
-        std::cout << "[Scheduler] WARN: PID=" << p->getPid()
-                  << " ya está TERMINATED, no se encola.\n";
+        std::cout << "[Scheduler] aviso: proceso '" << p->getName() << "'"
+                  << " ya esta terminado, no se encola.\n";
         return;
     }
 
     p->setState(ProcessState::READY);
     readyQueue_.push(p);
 
-    std::cout << "[Scheduler] PID=" << p->getPid()
-              << " (" << p->getName() << ") → READY  "
-              << "[Cola: " << readyQueue_.size() << " proceso(s)]\n";
+    std::cout << "[Scheduler] proceso '" << p->getName() << "' -> listo "
+              << "(" << readyQueue_.size() << " en cola)\n";
 }
 
-// unblock - bloqueo de E/S
-// BLOCKED READY: el proceso vuelve de una espera de E/S
 void Scheduler::unblock(Process *p)
 {
-    // Quitar de la lista de bloqueados
     auto it = std::find(blocked_.begin(), blocked_.end(), p);
     if (it != blocked_.end())
         blocked_.erase(it);
 
-    std::cout << "[Scheduler] PID=" << p->getPid()
-              << " BLOCKED → READY (desbloqueado)\n";
+    std::cout << "[Scheduler] Proceso '" << p->getName() << "'"
+              << " desbloqueado -> listo\n";
     enqueue(p);
 }
 
-// runQuantum - Ejecución de un quantum
-// Ejecuta UN quantum sobre el proceso al frente de la cola
 bool Scheduler::runQuantum()
 {
-    if (readyQueue_.empty())
-        return false;
+    QuantumResult r = runQuantumDetailed(nullptr);
+    (void)r;
+    return !readyQueue_.empty();
+}
 
-    // Sacar el proceso al frente
+Scheduler::QuantumResult Scheduler::runQuantumDetailed(const std::function<bool(Process *, int)> &tickHook)
+{
+    QuantumResult result{nullptr, false, 0};
+
+    if (readyQueue_.empty())
+        return result;
+
     Process *p = readyQueue_.front();
     readyQueue_.pop();
+    result.proc = p;
 
-    // READY: RUNNING
     p->setState(ProcessState::RUNNING);
 
     std::cout << "\n[t=" << std::setw(3) << clock_ << "] "
-              << "RUNNING  PID=" << p->getPid()
-              << " (" << p->getName() << ")"
-              << "  rem=" << p->getRemainingTime() << "\n";
+              << "ejecutando: '" << p->getName() << "'"
+              << "  tiempo restante=" << p->getRemainingTime() << "\n";
 
-    // Ejecutar tick a tick hasta agotar el quantum o terminar
     int ticksEjecutados = 0;
 
     while (ticksEjecutados < quantum_ && p->getRemainingTime() > 0)
     {
-        bool terminado = p->decrementTime(); // baja 1 tick
+        bool terminado = p->decrementTime();
         ++clock_;
         ++ticksEjecutados;
 
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
         std::cout << "  [t=" << std::setw(3) << clock_ << "]"
                   << "  tick #" << ticksEjecutados
-                  << "  rem=" << p->getRemainingTime();
+                  << "  tiempo restante=" << p->getRemainingTime();
+
+        if (tickHook && tickHook(p, ticksEjecutados))
+        {
+            p->setState(ProcessState::BLOCKED);
+            blocked_.push_back(p);
+            std::cout << " (bloqueado por e/s)\n";
+            break;
+        }
 
         if (terminado)
         {
-            std::cout << "  ← TERMINADO\n";
+            std::cout << " (terminado)\n";
             break;
         }
         std::cout << "\n";
     }
 
-    // Decidir transición de estado al terminar el quantum
+    result.ticksExecuted = ticksEjecutados;
+
     if (p->getRemainingTime() == 0)
     {
-        // RUNNING: TERMINATED
         p->setState(ProcessState::TERMINATED);
-        std::cout << "[Scheduler] PID=" << p->getPid()
-                  << " → TERMINATED  [t=" << clock_ << "]\n";
+        std::cout << "[Scheduler] proceso '" << p->getName() << "'"
+                  << " -> terminado [t=" << clock_ << "]\n";
+        result.terminated = true;
+    }
+    else if (p->getState() == ProcessState::BLOCKED)
+    {
+        std::cout << "[Scheduler] proceso '" << p->getName() << "'"
+                  << " bloqueado, queda: " << p->getRemainingTime() << "\n";
     }
     else
     {
-        // RUNNING: READY: volver a poner en la cola al final (Round-Robin)
         p->setState(ProcessState::READY);
         readyQueue_.push(p);
-        std::cout << "[Scheduler] PID=" << p->getPid()
-                  << " → READY (quantum agotado, vuelve a la cola)"
-                  << "  rem=" << p->getRemainingTime() << "\n";
+        std::cout << "[Scheduler] proceso '" << p->getName() << "'"
+                  << " -> listo (vuelve a cola), queda: " 
+                  << p->getRemainingTime() << "\n";
     }
 
-    return !readyQueue_.empty();
+    return result;
 }
 
-//  runAll - Ciclo completo Round-Robin
-// Ciclo completo Round-Robin hasta que todos los procesos terminen
 void Scheduler::runAll()
 {
-    printSection("PLANIFICADOR ROUND-ROBIN — inicio");
-    std::cout << "Quantum=" << quantum_
-              << "  Procesos en cola: " << readyQueue_.size() << "\n";
+    printSection("planificador round-robin - inicio");
+    std::cout << "quantum=" << quantum_
+              << "  procesos en cola: " << readyQueue_.size() << "\n";
 
-    // Encabezado de tabla de traza
     std::cout << "\n"
-              << std::left
-              << std::setw(8)  << "Tick"
-              << std::setw(8)  << "PID"
-              << std::setw(16) << "Nombre"
-              << std::setw(14) << "Estado"
-              << std::setw(10) << "Restante"
-              << "\n"
-              << std::string(56, '-') << "\n";
+              << std::setw(8) << "tick"
+              << std::setw(18) << "proceso"
+              << std::setw(14) << "estado"
+              << "restante\n";
 
     while (!readyQueue_.empty())
     {
@@ -149,25 +152,24 @@ void Scheduler::runAll()
             ++ticksEjecutados;
 
             std::cout << std::left
-                      << std::setw(8)  << clock_
-                      << std::setw(8)  << p->getPid()
-                      << std::setw(16) << p->getName()
-                      << std::setw(14) << "RUNNING"
-                      << std::setw(10) << p->getRemainingTime()
+                      << std::setw(8) << clock_
+                      << std::setw(18) << p->getName()
+                      << std::setw(14) << "ejecutando"
+                      << std::setw(18) << p->getRemainingTime()
                       << "\n";
 
-            if (terminado) break;
+            if (terminado)
+                break;
         }
 
         if (p->getRemainingTime() == 0)
         {
             p->setState(ProcessState::TERMINATED);
             std::cout << std::left
-                      << std::setw(8)  << clock_
-                      << std::setw(8)  << p->getPid()
-                      << std::setw(16) << p->getName()
-                      << std::setw(14) << "TERMINATED"
-                      << std::setw(10) << 0
+                      << std::setw(8) << clock_
+                      << std::setw(18) << p->getName()
+                      << std::setw(14) << "terminado"
+                      << std::setw(18) << 0
                       << "\n";
         }
         else
@@ -177,44 +179,30 @@ void Scheduler::runAll()
         }
     }
 
-    printSection("PLANIFICADOR — fin");
-    std::cout << "Tiempo total simulado: " << clock_ << " ticks\n\n";
+    printSection("planificador - fin");
+    std::cout << "tiempo total simulado: " << clock_ << " ticks\n\n";
 }
 
-//  printQueue - Estado actual de la cola de listos
-// Imprime el estado actual de la cola de listos
 void Scheduler::printQueue() const
 {
-    const int W = 52;
-    std::cout << "\n+" << std::string(W, '=') << "+\n";
-    std::cout << "|  COLA DE LISTOS"
-              << std::string(W - 16, ' ') << "|\n";
-    std::cout << "+" << std::string(W, '=') << "+\n";
-    std::cout << "| "
-              << std::left << std::setw(6)  << "PID"
-              << std::setw(16) << "Nombre"
-              << std::setw(12) << "Estado"
-              << std::setw(10) << "Restante"
-              << "  |\n";
-    std::cout << "+" << std::string(W, '-') << "+\n";
+    std::cout << "\ncola de listos:\n";
+    std::cout << std::left
+              << std::left << std::setw(18) << "proceso"
+              << std::setw(14) << "estado"
+              << "restante\n";
 
-    // std::queue no permite iteración directa, copiamos para recorrer
     std::queue<Process *> copia = readyQueue_;
     if (copia.empty())
     {
-        std::cout << "|  (cola vacía)"
-                  << std::string(W - 14, ' ') << "|\n";
+        std::cout << " (vacia)\n";
     }
     while (!copia.empty())
     {
         Process *p = copia.front();
         copia.pop();
-        std::cout << "| "
-                  << std::setw(6)  << p->getPid()
-                  << std::setw(16) << p->getName()
-                  << std::setw(12) << "READY"
-                  << std::setw(10) << p->getRemainingTime()
-                  << "  |\n";
+        std::cout << std::left
+                  << std::setw(18) << p->getName()
+                  << std::setw(14) << "listo"
+                  << std::setw(18) << p->getRemainingTime() << "\n";
     }
-    std::cout << "+" << std::string(W, '=') << "+\n\n";
 }
