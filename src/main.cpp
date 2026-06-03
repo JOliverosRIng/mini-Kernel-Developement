@@ -1,6 +1,8 @@
 #include "memory.hpp"
 #include "paging.hpp"
 #include "process.hpp"
+#include "filesystem.hpp"
+#include "io.hpp"
 #include <iostream>
 #include <limits>
 
@@ -13,7 +15,8 @@ static void pausa(const char *mensaje = "Presione Enter para continuar...")
 static void titulo(const char *texto)
 {
     const int ancho = 60;
-    std::cout << "\n" << std::string(ancho, '=') << "\n";
+    std::cout << "\n"
+              << std::string(ancho, '=') << "\n";
     std::cout << "  " << texto << "\n";
     std::cout << std::string(ancho, '=') << "\n\n";
 }
@@ -118,7 +121,84 @@ static void demoFase2()
 static void demoFase3()
 {
     titulo("FASE 3: Sistema de Archivos y E/S");
-    std::cout << "\nEn desarrollo...\n\n";
+
+    FileSystem fs;
+    IOManager io;
+
+    seccion("Estado inicial del sistema de archivos");
+    fs.printDirectory();
+    pausa();
+
+    seccion("Creando archivos en el sistema (PID 1)");
+    std::cout << "Creando 3 archivos:\n";
+    std::cout << "- datos.txt (256 bytes)\n";
+    std::cout << "- config.ini (128 bytes)\n";
+    std::cout << "- log.txt (64 bytes)\n\n";
+
+    fs.create("datos.txt", 256, 1);
+    fs.create("config.ini", 128, 1);
+    fs.create("log.txt", 64, 1);
+    fs.printDirectory();
+    pausa();
+
+    seccion("Abriendo archivo para lectura (PID 2)");
+    std::cout << "PID 2 intenta abrir 'datos.txt'...\n\n";
+    fs.open("datos.txt", 2);
+    fs.printDirectory();
+    pausa();
+
+    seccion("Solicitando operaciones de E/S");
+    std::cout << "PID 2 solicita READ de 'datos.txt'\n";
+    std::cout << "PID 1 solicita WRITE de 'config.ini'\n";
+    std::cout << "PID 3 solicita READ de 'log.txt'\n\n";
+
+    io.requestIO(2, IOType::READ, "datos.txt");
+    io.requestIO(1, IOType::WRITE, "config.ini");
+    io.requestIO(3, IOType::READ, "log.txt");
+    io.printQueue();
+    pausa();
+
+    seccion("Procesando E/S - Ciclo 1 (latencia: 3 ciclos)");
+    io.processIO();
+    io.printStatus();
+    pausa("Presione Enter para siguiente ciclo");
+
+    seccion("Procesando E/S - Ciclo 2");
+    io.processIO();
+    io.printStatus();
+    pausa("Presione Enter para siguiente ciclo");
+
+    seccion("Procesando E/S - Ciclo 3 (interrupcion)");
+    std::cout << "Al completarse, se genera una INTERRUPCION de E/S\n\n";
+    io.processIO();
+    io.printQueue();
+    pausa();
+
+    seccion("Continuando con la siguiente operacion en cola");
+    io.processIO(); // Ciclo 1 de WRITE
+    io.processIO(); // Ciclo 2 de WRITE
+    io.processIO(); // Ciclo 3 de WRITE (completa)
+    io.printQueue();
+    pausa();
+
+    seccion("Cerrando archivo (PID 2)");
+    std::cout << "PID 2 cierra 'datos.txt'...\n\n";
+    fs.close("datos.txt", 2);
+    fs.printDirectory();
+    pausa();
+
+    seccion("Intentando eliminar archivo abierto (validacion)");
+    std::cout << "PID 1 intenta eliminar 'config.ini' (deberia fallar)...\n\n";
+    fs.remove("config.ini", 1);
+    pausa();
+
+    seccion("Cerrando y eliminando archivo correctamente");
+    std::cout << "PID 3 cierra 'log.txt' y luego lo elimina...\n\n";
+    fs.open("log.txt", 3);
+    fs.close("log.txt", 3);
+    fs.remove("log.txt", 3);
+    fs.printDirectory();
+
     pausa("Presione Enter para volver al menu principal");
 }
 
