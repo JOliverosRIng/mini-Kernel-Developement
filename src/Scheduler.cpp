@@ -96,14 +96,14 @@ bool Scheduler::runQuantum()
     // Decidir transición de estado al terminar el quantum
     if (p->getRemainingTime() == 0)
     {
-        // RUNNING → TERMINATED
+        // RUNNING: TERMINATED
         p->setState(ProcessState::TERMINATED);
         std::cout << "[Scheduler] PID=" << p->getPid()
                   << " → TERMINATED  [t=" << clock_ << "]\n";
     }
     else
     {
-        // RUNNING → READY: reencolar al final (Round-Robin)
+        // RUNNING: READY: volver a poner en la cola al final (Round-Robin)
         p->setState(ProcessState::READY);
         readyQueue_.push(p);
         std::cout << "[Scheduler] PID=" << p->getPid()
@@ -114,7 +114,7 @@ bool Scheduler::runQuantum()
     return !readyQueue_.empty();
 }
 
-// ── runAll ────────────────────────────────────────────────────
+//  runAll - Ciclo completo Round-Robin
 // Ciclo completo Round-Robin hasta que todos los procesos terminen
 void Scheduler::runAll()
 {
@@ -181,7 +181,8 @@ void Scheduler::runAll()
     std::cout << "Tiempo total simulado: " << clock_ << " ticks\n\n";
 }
 
-// ── printQueue ────────────────────────────────────────────────
+//  printQueue - Estado actual de la cola de listos
+// Imprime el estado actual de la cola de listos
 void Scheduler::printQueue() const
 {
     const int W = 52;
