@@ -1,6 +1,7 @@
 #include "memory.hpp"
 #include "paging.hpp"
 #include "process.hpp"
+#include "Scheduler.hpp" 
 #include "filesystem.hpp"
 #include "io.hpp"
 #include <iostream>
@@ -34,8 +35,53 @@ static void limpiarBuffer()
 
 static void demoFase1()
 {
-    titulo("FASE 1: Gestion de Procesos");
-    std::cout << "\nEn desarrollo...\n\n";
+    titulo("FASE 1: Gestion de Procesos (Round-Robin)");
+
+    // Crear procesos
+    // Constructor de tu Process: (pid, name, burstTime, memSize)
+    Process p1(1, "Editor",      9, 200);
+    Process p2(2, "Compilador",  6, 150);
+    Process p3(3, "Player",      4, 100);
+    Process p4(4, "Browser",     7, 180);
+
+    seccion("Estado inicial — todos en NEW");
+    std::cout << p1.toString() << "\n";
+    std::cout << p2.toString() << "\n";
+    std::cout << p3.toString() << "\n";
+    std::cout << p4.toString() << "\n";
+    pausa();
+
+    // Encolar: NEW a READY
+    Scheduler sched(3); // quantum = 3 ticks
+    seccion("Encolando procesos: NEW → READY");
+    sched.enqueue(&p1);
+    sched.enqueue(&p2);
+    sched.enqueue(&p3);
+    sched.enqueue(&p4);
+    sched.printQueue();
+    pausa();
+
+    // Round-Robin paso a paso
+    seccion("Planificacion Round-Robin — turno a turno");
+    std::cout << "Se ejecuta un quantum (3 ticks) por turno.\n"
+              << "Si el proceso no termina, vuelve al final de la cola.\n\n";
+
+    int turno = 1;
+    while (!sched.isEmpty())
+    {
+        std::cout << "\n── Turno " << turno++ << " ──\n";
+        sched.runQuantum();
+    }
+    pausa();
+
+    // Estado final
+    seccion("Estado final — todos TERMINATED");
+    std::cout << p1.toString() << "\n";
+    std::cout << p2.toString() << "\n";
+    std::cout << p3.toString() << "\n";
+    std::cout << p4.toString() << "\n";
+
+    std::cout << "\nTiempo total simulado: " << sched.getClock() << " ticks\n";
     pausa("Presione Enter para volver al menu principal");
 }
 
